@@ -132,17 +132,3 @@ Several flags are available to customize the behavior, such as:
 | istio.test.kube.helm.valuesFile | `values-e2e.yaml` | The name of a file (relative to `istio.test.kube.helm.chartDir`) to provide Helm values. |
 | istio.test.kube.helm.values | `''` | A comma-separated list of helm values that will override those provided by `istio.test.kube.helm.valuesFile`. These are overlaid on top of a map containing the following: `global.hub=${HUB}`, `global.tag=${TAG}`, `global.proxy.enableCoreDump=true`, `global.mtls.enabled=true`,`galley.enabled=true`. |
 
-### MacOS problems
-
-1. If you see the following error message
-```bash
-# runtime/cgo
-_cgo_export.c:3:10: fatal error: 'stdlib.h' file not found
-FAIL	command-line-arguments [build failed]
-FAIL
-```
-You are missing `include` directory in the standard place. You can specify the sysroot by exporting `CGO_CFLAGS`.
-
-```
-export CGO_CFLAGS="-g -O2 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
-```
