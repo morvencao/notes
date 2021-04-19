@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  external_labels:
+    monitor: 'codelab-monitor'
+rule_files:
+- 'prometheus.rules.yml'
+scrape_configs:
+- job_name: 'prometheus'
+  scrape_interval: 5s
+  static_configs:
+  - targets: ['localhost:9090']
+- job_name: 'node'
+  static_configs:
+  - targets: ['10.0.81.212:8080', '10.0.81.212:8081']
+    labels:
+      group: 'production'
+  - targets: ['10.0.81.212:8082']
+    labels:
+      group: 'canary'
