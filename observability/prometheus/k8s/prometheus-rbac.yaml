@@ -7,9 +7,14 @@ rules:
 - apiGroups:
   - ""
   resources:
+  # for kubelet metrics
+  - nodes
   - nodes/metrics
   verbs:
+  # for kubelet metrics
   - get
+  - list
+  - watch
 - nonResourceURLs:
   - "/metrics"
   verbs:

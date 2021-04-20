@@ -102,6 +102,11 @@ data:
         source_labels:
         - __meta_kubernetes_service_label_component
         regex: apiserver
+      metric_relabel_configs:
+      - source_labels:
+        - __name__
+        action: drop
+        regex: (apiserver_storage_data_key_generation_latencies_microseconds_bucket|apiserver_admission_controller_admission_latencies_milliseconds_bucket|apiserver_admission_step_admission_latencies_milliseconds_bucket|apiserver_admission_step_admission_latencies_milliseconds_summary|apiserver_request_latencies_bucket|apiserver_request_latencies_summary|apiserver_storage_data_key_generation_latencies_microseconds_bucket|rest_client_request_latency_seconds_bucket)
     - job_name: pods
       honor_labels: true
       kubernetes_sd_configs:
@@ -112,15 +117,15 @@ data:
       tls_config:
         insecure_skip_verify: true
       bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-      # metric_relabel_configs:
-      # - source_labels:
-      #   - __name__
-      #   regex: container_(cpu_cfs_periods_total|fs_inodes_total|fs_sector_reads_total|fs_sector_writes_total|last_seen|memory_mapped_file|spec_memory_reservation_limit_bytes|spec_memory_swap_limit_bytes|tasks_state)
-      #   action: drop
-      # - source_labels:
-      #   - container
-      #   regex: ""
-      #   action: drop
-      # - action: labeldrop
-      #   regex: (id|name|pod_name|image)
+      metric_relabel_configs:
+      - source_labels:
+        - __name__
+        regex: container_(cpu_cfs_periods_total|fs_inodes_total|fs_sector_reads_total|fs_sector_writes_total|last_seen|memory_mapped_file|spec_memory_reservation_limit_bytes|spec_memory_swap_limit_bytes|tasks_state)
+        action: drop
+      - source_labels:
+        - container
+        regex: ""
+        action: drop
+      - action: labeldrop
+        regex: (id|name|pod_name|image)
 ---
