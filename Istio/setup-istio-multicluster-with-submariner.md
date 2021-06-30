@@ -2,26 +2,28 @@
 
 ## Background
 
-Istio provides [multiple options](https://istio.io/latest/docs/ops/deployment/deployment-models/) for how to deploy a single service mesh across multiple clusters, depending on the isolation, performance, and HA requirements. If you take another look at these different deployment models, you will find that either istio control plane(istiod) or kube-apiserver needs to be accessed from remote clusters. Besides, the microservices in the data plane that will to be accessed across clusters also need to be exposed to remote clusters. Although east-west gateway can be used to enable remote access, but it can become harder to understand and manage as the deployment of microservices grows in size and complexity.
+Today, kubernetes has become the standard for container orchestration, and more organizations are increasingly deploying many more Kubernetes clusters, and treating these clusters as disposable, to facilitate features like geo-redundancy, scale, and isolation for their applications. As the most popular service mesh solution, Istio also provides [multiple options](https://istio.io/latest/docs/ops/deployment/deployment-models/) for how to deploy a single service mesh across multiple clusters, depending on the isolation, performance, and HA requirements. If you take another look at these different deployment models, you will find that either istio control plane(istiod) or kube-apiserver needs to be accessed from remote clusters. Besides, the microservices in the data plane that will need to be accessed across clusters also need to be exposed to remote clusters. Although an east-west gateway can be used to enable remote access, it can also increase the configuration difficulties as the deployment of microservices grows in size and complexity.
 
 ## Submariner to the Rescue
 
-[Submariner](https://submariner.io/) enables direct networking access between pods and services spinning in different Kubernetes clusters, either on-premises or in the cloud, it also provides [service discovery](https://submariner.io/getting-started/architecture/service-discovery/) across clusters and support for interconnecting clusters with [overlapping CIDRs](https://submariner.io/getting-started/architecture/globalnet/). With submariner, we don't need to manage the east-west gateways, all the pod and services can be accessed directly. This removes the burden on developers and mesh operators, which helps scale beyond a few clusters.
+[Submariner](https://submariner.io/) enables direct networking access between pods and services sitting in different Kubernetes clusters, either on-premises and/or in the cloud. It implements this by facilitating a cross-cluster L3 connectivity using encrypted VPN tunnels, the [Gateway Engines](https://submariner.io/getting-started/architecture/gateway-engine/) are used to manage the secure tunnels to other clusters, while the [Broker](https://submariner.io/getting-started/architecture/broker/) is used to manage the exchange of metadata between Gateway Engines enabling them to discover one another. Submariner also provides [service discovery](https://submariner.io/getting-started/architecture/service-discovery/) across clusters and support for interconnecting clusters with [overlapping CIDRs](https://submariner.io/getting-started/architecture/globalnet/) by the [Globalnet Controller](https://submariner.io/getting-started/architecture/globalnet/).
 
-In this blog, we will see how to set up istio [Multi-Primary](https://istio.io/latest/docs/setup/install/multicluster/multi-primary/) model across two openshift clusters with submariner and verify the istio multicluster installation is working properly.
+![submariner-architecture](https://submariner.io/images/submariner/architecture.jpg)
 
-Note: Actually this blog also applies to other istio multicluster [deployment models](https://istio.io/latest/docs/ops/deployment/deployment-models/), submariner will ensure there is direct connectivity both for the istio control plane and data plane.
+In the context of service-mesh and multicluster, the use of submariner, would remove the need to  manage the east-west gateways, allowing for the selected pod and services to be accessed directly. This removes the burden on developers and mesh operators, which helps scale beyond a few clusters.
+
+In this blog, we will see how rather than setup an istio in either a [Primary-Remote](https://istio.io/latest/docs/setup/install/multicluster/primary-remote/), [Multi-Primary-on-different-networks](https://istio.io/latest/docs/setup/install/multicluster/multi-primary_multi-network/) or [Primary-Remote-on-different-networks](https://istio.io/latest/docs/setup/install/multicluster/primary-remote_multi-network/) that all require multiple east-west gateways, submariner can be used to set up istio Multi-Primary model across many openshift clusters (two in this example) and verify that the istio multicluster installation is working properly.
 
 ## Prerequisites
 
-Before we begin an istio multicluster installation, we need to prepare two openshift clusters and deploy submariner for interconnection between the two clusters by following the [steps](https://submariner.io/getting-started/quickstart/openshift/aws/). To make it cleaner, we will create two clusters `cluster1` and `cluster2` with different IP CIDR ranges:
+Before we begin an istio multicluster installation, we need to prepare two openshift clusters and deploy submariner for interconnection between the two clusters by following those [steps](https://submariner.io/getting-started/quickstart/openshift/aws/). To make it simpler, we will create two clusters `cluster1` and `cluster2` with different IP CIDR ranges:
 
 | Cluster | Pod CIDR | Service CIDR |
 | --- | --- | --- |
 | cluster1 | 10.128.0.0/14 | 172.30.0.0/16 |
 | cluster2 | 10.132.0.0/14 | 172.31.0.0/16 |
 
-For submariner installation, we will use `cluster1` as broker and then join `cluster1` and `cluster2` to the broker. After you deploy the submariner, be sure to verify it is working with `subctl`:
+For the submariner installation, we will use `cluster1` as the broker and then join `cluster1` and `cluster2` to the broker. Remember to verify that submariner is working properly by using the subctl command:
 
 ```
 export KUBECONFIG=cluster1/auth/kubeconfig:cluster2/auth/kubeconfig
@@ -32,13 +34,17 @@ In addition, we also need to follow these [instructions](https://istio.io/latest
 
 ## Configure Trust for Istio
 
-A multicluster service mesh deployment requires that we establish trust between all clusters in the mesh, which means we need to use a common root certificate to generate intermediate certificates for each cluster. Follow the [instructions](https://istio.io/latest/docs/tasks/security/cert-management/plugin-ca-cert/) to generate and push a CA certificate secret to both the `cluster1` and `cluster2` clusters.
+A multicluster service mesh deployment requires that we establish trust between all clusters in the mesh, which means we need to use a common root certificate to generate intermediate certificates for each cluster. Follow these [instructions](https://istio.io/latest/docs/tasks/security/cert-management/plugin-ca-cert/) to generate and push a CA certificate secret to both the `cluster1` and `cluster2` clusters.
 
 ## Install Istio Multi-Primary Multicluster Model
 
-Now, we’re now ready to install an istio mesh across multiple clusters, we will start from istio [Multi-Primary](https://istio.io/latest/docs/setup/install/multicluster/multi-primary/) model, in which the istio control plane will be installed on both `cluster1` and `cluster2`, making each a primary cluster. Both clusters reside on the `network1` network, meaning there is direct connectivity between the pods in both clusters with submariner. In this configuration, each control plane observes the API Servers in both clusters for endpoints. Service workloads communicate directly (pod-to-pod) across cluster boundaries.
+We are now ready to install an istio mesh across multiple clusters. 
+
+We will start with the istio [Multi-Primary](https://istio.io/latest/docs/setup/install/multicluster/multi-primary/) model, in which the istio control plane is installed on both `cluster1` and `cluster2`, making each of them a primary cluster.
 
 ![istio-multicluster-submariner](./images/setup-istio-multicluster-submariner.jpg)
+
+Both clusters reside on the `network1` network, meaning there is direct connectivity between the pods in both clusters. The direct connectivity is achieved with submariner. In this configuration, each control plane observes the API Servers in both clusters for endpoints. Service workloads communicate directly (pod-to-pod) across cluster boundaries.
 
 1. Configure `cluster1` as a primary cluster:
 
@@ -74,7 +80,7 @@ spec:
 EOF
 ```
 
-> Note: istio cni is enabled in the configuration to remove the `NET_ADMIN` and `NET_RAW` capabilities for users deploying pods into the Istio mesh on openshift clusters, check the [link](https://istio.io/latest/docs/setup/platform-setup/openshift/) for more details.
+> Note: istio cni is enabled in the configuration to remove the `NET_ADMIN` and `NET_RAW` capabilities for users deploying pods into the Istio mesh on openshift clusters, check this [link](https://istio.io/latest/docs/setup/platform-setup/openshift/) for more details.
 
 Then apply the configuration to `cluster1`:
 
@@ -124,7 +130,7 @@ istioctl install --kubeconfig=cluster2/auth/kubeconfig -f cluster2.yaml --skip-c
 
 3. Enable endpoint discovery from each cluster for istio:
 
-We need to make sure each API server can be accessed by the istio control plane on the other cluster so that all the endpoints can be discoveried cross clusters, without API Server access, the control plane will reject the requests to endpoint on other cluster.
+We need to make sure each API server can be accessed by the istio control plane on the other cluster so that all the endpoints can be discovered across clusters Without API Server access, the control plane will reject the requests to the endpoints on other clusters.
 
 To provide API Server access to `cluster1`, we will generate a remote secret in `cluster2` and apply it to `cluster1` by running the following command:
 
@@ -132,7 +138,8 @@ To provide API Server access to `cluster1`, we will generate a remote secret in 
 istioctl x create-remote-secret --kubeconfig=cluster2/auth/kubeconfig --name=cluster2 | kubectl apply -f - --kubeconfig=cluster1/auth/kubeconfig
 ```
 
-> Note: we are supoposed to get error due to multiple secrets found in the serviceaccount `istio-system/istio-reader-service-account` in openshift cluster. To workaround this, we need to get the correct secret name manually from that serviceaccount and specify the secret name by the `--secret-name` for `create-remote-secret` command:
+> Note: we are supposed to get an error due to multiple secrets found in the serviceaccount `istio-system/istio-reader-service-account` in openshift cluster. To workaround this, we simply need to get the correct secret name manually from that serviceaccount and specify the secret name by the `--secret-name` for `create-remote-secret` command:
+
 
 ```
 ISTIO_READER_SRT_NAME=$(kubectl --kubeconfig=cluster2/auth/kubeconfig -n istio-system get serviceaccount/istio-reader-service-account -o jsonpath='{.secrets}' | jq -r '.[] | select(.name | test ("istio-reader-service-account-token-")).name')
@@ -164,11 +171,11 @@ NAME                                                   CDS        LDS        EDS
 istio-ingressgateway-565bd54476-jb84z.istio-system     SYNCED     SYNCED     SYNCED     NOT SENT     istiod-6765d8c666-mlcrc     1.10.0
 ```
 
-5. Verify the installation
+5. Verify the installation:
 
-Following the [guide](https://istio.io/latest/docs/setup/install/multicluster/verify/) to verify that the istio multicluster installation is working properly.
+Follow this [guide](https://istio.io/latest/docs/setup/install/multicluster/verify/) to verify that the istio multicluster installation is working properly.
 
-Make sure the application pods are connected to the istiod its own primary cluster:
+Make sure the application pods are connected to the istiod in their own primary cluster:
 
 ```
 $ istioctl --kubeconfig=cluster1/auth/kubeconfig proxy-status
@@ -183,7 +190,7 @@ istio-ingressgateway-565bd54476-jb84z.istio-system     SYNCED     SYNCED     SYN
 sleep-557747455f-q5n8g.sample                          SYNCED     SYNCED     SYNCED     SYNCED       istiod-6765d8c666-mlcrc     1.10.0
 ```
 
-6. Verify that cross-cluster load balancing works as expected by calling the `HelloWorld` service several times using the `Sleep` pod:
+6. Verify that cross-cluster load balancing works as expected by calling the `HelloWorld` service several times from the `Sleep` pod:
 
 ```
 $ kubectl exec --kubeconfig=cluster1/auth/kubeconfig -n sample -c sleep "$(kubectl get pod --kubeconfig=cluster1/auth/kubeconfig -n sample -l app=sleep -o jsonpath='{.items[0].metadata.name}')" -- curl -sS helloworld.sample:5000/hello
@@ -192,7 +199,7 @@ $ kubectl exec --kubeconfig=cluster1/auth/kubeconfig -n sample -c sleep "$(kubec
 Hello version: v2, instance: helloworld-v2-54df5f84b-7prhg
 ```
 
-7. Verify the request routing is working as expected by creating the follow destionrules and virtualservices:
+7. Verify the request routing is working as expected by creating the follow `destionrules` and `virtualservices`:
 
 ```
 cat << EOF | kubectl --kubeconfig=cluster1/auth/kubeconfig -n sample apply -f -
@@ -238,4 +245,4 @@ Hello version: v2, instance: helloworld-v2-54df5f84b-7prhg
 
 ## Summary
 
-With submainer, it becomes easy to set up istio service mesh across multiple clusters, we don't need to care about how the traffic between the clusters is actually connected under the hood. After the control planes are set up, all services across clusters can be treated as in a single cluster, the east-west gateways are not needed any more, which makes developers and mesh operators focus on their services and mesh, instead of interconnection between clusters.
+Submariner, simplifies the  setup of istio service mesh across multiple clusters by bringing everything under a simple single model..
