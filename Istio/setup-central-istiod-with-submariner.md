@@ -8,7 +8,7 @@ If you have't read the [last blog](./setup-istio-multicluster-with-submariner.md
 
 ## Prerequisites
 
-Before we begin the installation, we need to prepare two openshift clusters and deploy submariner for interconnection between the two clusters by following the [steps](https://submariner.io/getting-started/quickstart/openshift/aws/). To make it clear, we will create the following two clusters `mcscluster1` and `mcscluster2` with different IP CIDR ranges:
+Before the installation, we need to prepare two openshift clusters and deploy submariner for the interconnection between the two clusters by following the [steps](https://submariner.io/getting-started/quickstart/openshift/aws/). To make it clear, we will create the following two clusters `mcscluster1` and `mcscluster2` with different IP CIDR ranges:
 
 | Cluster | Pod CIDR | Service CIDR |
 | --- | --- | --- |
@@ -116,10 +116,6 @@ spec:
               name: inject-volume
               mountPath: /var/lib/istio/inject
         env:
-        - name: INJECTION_WEBHOOK_CONFIG_NAME
-          value: ""
-        - name: VALIDATION_WEBHOOK_CONFIG_NAME
-          value: ""
         - name: EXTERNAL_ISTIOD
           value: "true"
         - name: CLUSTER_ID
@@ -233,64 +229,6 @@ NAME                     WEBHOOKS   AGE
 istio-sidecar-injector   4          117s
 ```
 
-3. The `caBundle` of the webhook server can't be successfully patched into the webhook configuration. To make sure the sidecat can be injected correctly into the application pod deployed on the remote clusters, we need to manually patch the `caBundle` to the mutatingwebhookconfiguration `istio-sidecar-injector`. The CA can be retrieve by checking the logs of the central `istiod`:
-
-```bash
-$ oc --kubeconfig=$PWD/mcscluster1/auth/kubeconfig -n istio-system logs deploy/istiod | grep 'CA certificate' -A 20
-2021-07-05T09:26:12.212780Z	info	Use self-signed certificate as the CA certificate
-2021-07-05T09:26:12.222956Z	info	pkica	Failed to get secret (error: secrets "istio-ca-secret" not found), will create one
-2021-07-05T09:26:12.698367Z	info	pkica	Using self-generated public key:
------BEGIN CERTIFICATE-----
-xxxxxxxx
------END CERTIFICATE-----
-```
-
-4. Encode the CA certificate from the central `istiod` logs and then patch the CA to the `caBundle` of the mutatingwebhookconfiguration `istio-sidecar-injector` on the remote cluster `mcscluster2`:
-
-```bash
-$ # bnase64 encode the CA
-$ cat << EOF | base64 -w0
------BEGIN CERTIFICATE-----
-xxxxxxxx
------END CERTIFICATE-----
-EOF
-```
-
-Then, edit the mutatingwebhookconfiguration `istio-sidecar-injector` on the remote cluster `mcscluster2` and add `caBundle` to it:
-
-```bash
-$ oc --kubeconfig=$PWD/mcscluster2/auth/kubeconfig edit mutatingwebhookconfiguration istio-sidecar-injector
-```
-
-After this step, the mutatingwebhookconfiguration `istio-sidecar-injector` should resemble the following snippet:
-
-```yaml
-- admissionReviewVersions:
-  - v1beta1
-  - v1
-  clientConfig:
-    caBundle: yyyyyyyy
-    url: https://istiod.istio-system.svc.clusterset.local:443/inject/:ENV:cluster=mcscluster2:ENV:net=network1
-  failurePolicy: Fail
-  matchPolicy: Equivalent
-  name: namespace.sidecar-injector.istio.io
-  namespaceSelector:
-    matchExpressions:
-    - key: istio-injection
-      operator: In
-      values:
-      - enabled
-  objectSelector:
-    matchExpressions:
-    - key: sidecar.istio.io/inject
-      operator: NotIn
-      values:
-      - "false"
-  reinvocationPolicy: Never
-  rules:
-  ...
-```
-
 ### Verify by deploying a sample application on the remote cluster `mcscluster2`
 
 1. Prepare to deploy the applications:
@@ -303,7 +241,7 @@ oc --kubeconfig=$PWD/mcscluster2/auth/kubeconfig adm policy add-scc-to-group any
 
 > Note: Replace `<target-namespace>` with the appropriate namespace, in our experiment, the namespace is `sample`.
 
-2. Deploy the `helloworld` application in to `sample` namespace in the remote cluster `mcscluster2`:
+2. Deploy the `helloworld` application in to the `sample` namespace in the remote cluster `mcscluster2`:
 
 ```bash
 oc --kubeconfig=$PWD/mcscluster2/auth/kubeconfig create ns sample
@@ -312,7 +250,8 @@ oc apply --kubeconfig=$PWD/mcscluster2/auth/kubeconfig -f ~/oasis/istio-1.10.1/s
 oc apply --kubeconfig=$PWD/mcscluster2/auth/kubeconfig -f ~/oasis/istio-1.10.1/samples/helloworld/helloworld.yaml -l version=v1 -n sample
 ```
 
-> Note: There is an issue for submariner about DNS query failure to the exported service from any `hostNetwork` pod, which results that the istio sidecar can't be injected into the application pod correctly in the remote clusters. As you may known, the kube-apiserver on openshift cluster is deployed as an `hostNetwork` pod, and the webhook actually works before the application pod is created, the kube-apiserver will call the webhook server for istio sidecar injection, in our example, the webhook server is the central istiod on the cluster `mcscluster1`, it will be accessed by the exported service's hostname `istiod.istio-system.svc.clusterset.local`. But the call will be failing because the hostname can't be resolved correctly. A workaround is that manually adding the DNS record to the `/etc/hosts` of the kube-apiserver of the remote cluster `mcscluster2`, the IP is the `clusterIP` of the istiod service on the central cluster `mcscluster1`.
+> Note: There is an issue for submariner about DNS query failure to the exported service from any `hostNetwork` pod, which results that the istio sidecar can't be injected into the application pod correctly in the remote clusters. As you may know, the kube-apiserver will call the webhook server via FQDN `istiod.istio-system.svc.clusterset.local` we configured in the `mutatingwebhookconfiguration` for istio sidecar injection, but the kube-apiserver on openshift cluster is deployed as an `hostNetwork` pod, so the call will be failing because the hostname can't be resolved correctly. A workaround is that manually adding the DNS record to the `/etc/hosts` of the kube-apiserver of the remote cluster `mcscluster2`, the DNS record IP is the `clusterIP` of the istiod service on the central cluster `mcscluster1`.
+
 
 3. Verify that the `helloworld` pod is injected with istio sidecar and starting up:
 
@@ -322,7 +261,7 @@ NAME                             READY   STATUS    RESTARTS   AGE
 helloworld-v1-776f57d5f6-ptrf6   2/2     Running   0          44s
 ```
 
-4. Verify that the sidecar for the `helloworld` application is connected to the central istio contral plane:
+4. Verify that the sidecar of the `helloworld` application is connected to the central istio contral plane:
 
 ```bash
 $ istioctl --kubeconfig=$PWD/mcscluster1/auth/kubeconfig proxy-status
@@ -330,4 +269,4 @@ NAME                                      CDS        LDS        EDS        RDS  
 helloworld-v1-776f57d5f6-ptrf6.sample     SYNCED     SYNCED     SYNCED     SYNCED     istiod-7cfb5cbbf-mlr2z     1.10.1
 ```
 
-> Note: If you want to check envoy XDS configuration of the istio sidecar with `istioctl proxy-config` command, you have to check it on the remote cluster, since the pod is running on the remote cluster.
+> Note: If you want to check envoy XDS configuration of the istio sidecar with `istioctl proxy-config` command, you have to check it on the remote cluster `mcscluster2`, since the pod is running on the remote cluster.
